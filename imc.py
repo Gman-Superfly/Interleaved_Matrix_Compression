@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-import numpy as np
+from typing import Optional, Tuple, Dict, Union
 
 # Lossless Matrix Compressor
 class MatrixCompressor:
@@ -20,8 +20,9 @@ class MatrixCompressor:
         ])
         self.caps_int = torch.round(caps * self.scale_factor).to(torch.int64)
         
-    def split(self, matrix):
-        matrix_int = (matrix * self.scale_factor).round().to(torch.int64)
+    def split(self, matrix: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        sf = self.scale_factor.to(device=matrix.device, dtype=matrix.dtype)
+        matrix_int = (matrix * sf).round().to(torch.int64)
         flat_int = matrix_int.view(-1)
 
         # Symmetric capacity limits for positive and negative values
@@ -46,19 +47,22 @@ class MatrixCompressor:
         # Third band (remainder)
         m3_int = rem1 - m2_int
 
-        m1 = m1_int.float() / self.scale_factor
-        m2 = m2_int.float() / self.scale_factor
-        m3 = m3_int.float() / self.scale_factor
+        sf_float = self.scale_factor.to(device=matrix.device, dtype=torch.float32)
+        m1 = m1_int.float() / sf_float
+        m2 = m2_int.float() / sf_float
+        m3 = m3_int.float() / sf_float
         return m1.view_as(matrix), m2.view_as(matrix), m3.view_as(matrix)
     
-    def merge(self, m1, m2, m3):
-        m1_int = (m1 * self.scale_factor).round().to(torch.int64)
-        m2_int = (m2 * self.scale_factor).round().to(torch.int64)
-        m3_int = (m3 * self.scale_factor).round().to(torch.int64)
+    def merge(self, m1: torch.Tensor, m2: torch.Tensor, m3: torch.Tensor) -> torch.Tensor:
+        sf = self.scale_factor.to(device=m1.device, dtype=m1.dtype)
+        m1_int = (m1 * sf).round().to(torch.int64)
+        m2_int = (m2 * sf).round().to(torch.int64)
+        m3_int = (m3 * sf).round().to(torch.int64)
         merged_int = m1_int + m2_int + m3_int
-        return merged_int.float() / self.scale_factor
+        sf_float = self.scale_factor.to(device=m1.device, dtype=torch.float32)
+        return merged_int.float() / sf_float
     
-    def warmup(self, matrix, cycles=1):
+    def warmup(self, matrix: torch.Tensor, cycles: int = 1) -> torch.Tensor:
         for _ in range(cycles):
             m1, m2, m3 = self.split(matrix)
             matrix = self.merge(m1, m2, m3)
@@ -146,9 +150,31 @@ class CompressedMLP(nn.Module):
         assert isinstance(activations, torch.Tensor), f"Expected torch.Tensor, got {type(activations)}"
         return activations.abs().mean(dim=1)
 
+    def expected_interleaved_numel(self) -> int:
+        total = 0
+        # Input layer
+        in_w = self.hidden_dim * self.input_layer.in_features
+        in_b = self.hidden_dim
+        total += 3 * in_w + 3 * in_b
+        # Hidden layers
+        hid_w = self.hidden_dim * self.hidden_dim
+        hid_b = self.hidden_dim
+        total += len(self.hidden_layers) * (3 * hid_w + 3 * hid_b)
+        # Output layer
+        out_w = self.output_layer.in_features * self.output_layer.out_features
+        out_b = self.output_layer.out_features
+        total += 3 * out_w + 3 * out_b
+        return total
+
+    def _validate_interleaved_vector(self, interleaved_params: torch.Tensor) -> None:
+        assert isinstance(interleaved_params, torch.Tensor), "interleaved_params must be a Tensor"
+        assert interleaved_params.dim() == 1, "interleaved_params must be a 1D tensor"
+        expected = self.expected_interleaved_numel()
+        assert interleaved_params.numel() == expected, f"interleaved_params length {interleaved_params.numel()} != expected {expected}"
+
     def forward_banded(self, x: torch.Tensor, interleaved_params: torch.Tensor, bands: int = 1) -> torch.Tensor:
         """Forward using only the first N bands per layer (N in {1,2,3})."""
-        assert isinstance(interleaved_params, torch.Tensor), "interleaved_params must be a Tensor"
+        self._validate_interleaved_vector(interleaved_params)
         assert bands in (1, 2, 3), f"bands must be 1, 2 or 3, got {bands}"
         x = x.view(x.size(0), -1)
         idx = 0
@@ -197,13 +223,15 @@ class CompressedMLP(nn.Module):
             y = y + torch.matmul(x, w2.T) + b2
         if bands >= 3:
             y = y + torch.matmul(x, w3.T) + b3
+        # idx should equal total length
+        assert idx + bias_size == interleaved_params.numel(), "forward_banded index mismatch"
         return y
 
     def compute_band3_l2(self, interleaved_params: torch.Tensor) -> torch.Tensor:
         """Compute L2 norm of all band-3 parameters (w3 and b3 across layers)."""
-        assert isinstance(interleaved_params, torch.Tensor), "interleaved_params must be a Tensor"
+        self._validate_interleaved_vector(interleaved_params)
         idx = 0
-        l2 = 0.0
+        l2 = torch.zeros((), dtype=interleaved_params.dtype, device=interleaved_params.device)
         # Input layer
         chunk_size = self.hidden_dim * self.input_layer.in_features
         idx += chunk_size  # w1
@@ -235,9 +263,11 @@ class CompressedMLP(nn.Module):
         idx += bias_size  # b2
         b3 = interleaved_params[idx:idx+bias_size]
         l2 = l2 + torch.sum(w3 * w3) + torch.sum(b3 * b3)
+        # idx should equal total length
+        assert idx + bias_size == interleaved_params.numel(), "compute_band3_l2 index mismatch"
         return l2
 
-    def interleave_params(self):
+    def interleave_params(self) -> torch.Tensor:
         params = []
         w1, w2, w3 = self.compressor.split(self.input_layer.weight)
         b1, b2, b3 = self.compressor.split(self.input_layer.bias)
@@ -251,7 +281,8 @@ class CompressedMLP(nn.Module):
         params.extend([w1.view(-1), w2.view(-1), w3.view(-1), b1, b2, b3])
         return torch.cat(params)
     
-    def deinterleave_params(self, interleaved):
+    def deinterleave_params(self, interleaved: torch.Tensor) -> None:
+        self._validate_interleaved_vector(interleaved)
         idx = 0
         with torch.no_grad():
             chunk_size = self.hidden_dim * self.input_layer.in_features
@@ -302,9 +333,12 @@ class CompressedMLP(nn.Module):
             idx += bias_size
             b3 = interleaved[idx:idx+bias_size]
             self.output_layer.bias.copy_(self.compressor.merge(b1, b2, b3))
+            # idx should equal total length
+            assert idx + bias_size == interleaved.numel(), "deinterleave_params index mismatch"
     
-    def forward_expanded(self, x, interleaved_params):
+    def forward_expanded(self, x: torch.Tensor, interleaved_params: torch.Tensor) -> torch.Tensor:
         """Forward pass using interleaved (split) weights."""
+        self._validate_interleaved_vector(interleaved_params)
         x = x.view(x.size(0), -1)
         idx = 0
         # Input layer
@@ -355,9 +389,11 @@ class CompressedMLP(nn.Module):
         idx += bias_size
         b3 = interleaved_params[idx:idx+bias_size]
         x = torch.matmul(x, w1.T) + b1 + torch.matmul(x, w2.T) + b2 + torch.matmul(x, w3.T) + b3
+        # idx should equal total length
+        assert idx + bias_size == interleaved_params.numel(), "forward_expanded index mismatch"
         return x
     
-    def forward(self, x, uncertainty=None, threshold=0.5, interleaved_params=None):
+    def forward(self, x: torch.Tensor, uncertainty: Optional[float] = None, threshold: float = 0.5, interleaved_params: Optional[torch.Tensor] = None) -> torch.Tensor:
         """Forward pass with dynamic unzip. Expand when uncertainty (e.g., entropy) is high."""
         if uncertainty is not None and uncertainty > threshold and interleaved_params is not None:
             return self.forward_expanded(x, interleaved_params)
@@ -374,17 +410,17 @@ class CompressedMLP(nn.Module):
         act_threshold2: float = 0.02,
         act_threshold3: float = 0.01,
         final_metric: str = "entropy",
-        final_threshold: float = None,
-    , return_stats: bool = False) -> torch.Tensor:
+        final_threshold: Optional[float] = None,
+        return_stats: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, float]]]:
         """Single-pass progressive unfolding with per-layer gating.
 
         - Uses only band-1 by default, and conditionally adds band-2 and band-3 per sample.
         - Hidden layers use activation strength gating; output layer uses classification uncertainty.
         """
-        assert isinstance(interleaved_params, torch.Tensor), "interleaved_params must be a Tensor"
+        self._validate_interleaved_vector(interleaved_params)
         x = x.view(x.size(0), -1)
         idx = 0
-        batch_size = x.size(0)
 
         # Input layer
         chunk_size = self.hidden_dim * self.input_layer.in_features
@@ -475,7 +511,11 @@ class CompressedMLP(nn.Module):
             out_expand3 = mask3_out.sum().item() / mask3_out.numel()
             hidden_expand2 = float(hidden_masks2_total.item()) / float(hidden_masks_den)
             hidden_expand3 = float(hidden_masks3_total.item()) / float(hidden_masks_den)
+            # idx should equal total length
+            assert idx + bias_size == interleaved_params.numel(), "forward_progressive index mismatch"
             return y, {"out_expand2_rate": out_expand2, "out_expand3_rate": out_expand3, "hidden_expand2_rate": hidden_expand2, "hidden_expand3_rate": hidden_expand3}
+        # idx should equal total length
+        assert idx + bias_size == interleaved_params.numel(), "forward_progressive index mismatch"
         return y
 
 # Compute parameters
@@ -504,7 +544,6 @@ test_loader = DataLoader(test_dataset, batch_size=1000, shuffle=False)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.01)
 
 # Train with expanded forward and auxiliary band-1; band-3 regularizer (1 epoch)
 model.train()
@@ -529,9 +568,10 @@ for batch_idx, (data, target) in enumerate(train_loader):
 
 # Verify lossless recovery (post-training, no updates for test)
 with torch.no_grad():
+    current_weights = [p.clone() for p in model.parameters()]
     interleaved = model.interleave_params()
     model.deinterleave_params(interleaved)
-    max_error = max(torch.abs(p - orig).max().item() for p, orig in zip(model.parameters(), orig_weights))
+    max_error = max(torch.abs(p - orig).max().item() for p, orig in zip(model.parameters(), current_weights))
 print(f"Max error after round-trip (post-training, no updates): {max_error:.2e}")
 
 # Calibrate output threshold to meet target expansion rate
