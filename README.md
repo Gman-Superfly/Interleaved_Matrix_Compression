@@ -46,6 +46,11 @@ Properties:
     - Uncertainty utilities: batch and per-sample metrics + default thresholds.
     - `forward_banded` for band-limited passes (bands=1/2/3) used in training and calibration.
     - `compute_band3_l2` for the regularizer.
+    - Validation helpers: `_validate_interleaved_vector` + `expected_interleaved_numel()` ensure 1D interleaved vector length matches the architecture.
+    - Lightweight assertions check index coverage after forward/interleave operations to catch slicing mismatches early.
+    - Type hints across public methods for clarity and tooling support.
+  - Implementation notes:
+    - Device-safe compressor: scale factors move to the same device/dtype as tensors to avoid cross-device ops.
   - Training loop: full loss + auxiliary band-1 loss + small band-3 L2.
   - Calibration pass: scans output thresholds to hit a target expansion rate.
   - Evaluation: uses `forward_progressive` with calibrated threshold and reports expansion statistics.
@@ -54,6 +59,12 @@ Properties:
 - Round-trip invariance: `deinterleave(interleave(params))` preserves weights (pre/post training checks included).
 - Lossless decomposition: `merge(m1, m2, m3) == original` within fp32 tolerance.
 - Full equivalence: `forward_expanded` equals merged when all three bands are included.
+
+## Validation and typing
+- Assert-early checks verify:
+  - Interleaved vector is 1D and has the exact expected length.
+  - Forward passes and readers consume the entire interleaved vector (index coverage).
+- Methods include type hints; simple guards ensure inputs are Tensors with expected shapes.
 
 ## Running locally
 
@@ -77,6 +88,7 @@ python imc.py
 Notes:
 - The provided MLP is intentionally deep (default 380 layers) and may be slow; feel free to reduce `num_hidden_layers` and/or `hidden_dim` in `CompressedMLP` for quick iteration.
 - If you have CUDA, PyTorch will use it automatically.
+ - The example calibration scans thresholds using the test loader for brevity; for proper evaluation, prefer a held-out validation split for calibration.
 
 ## Key knobs to tune
 - In `forward_progressive` (inference):
