@@ -107,12 +107,30 @@ Notes:
 - **Auxiliary/regularized training**: Encourages information to concentrate in early bands, making the compressed path both fast and accurate.
 - **Simple gates first**: Activation-strength for hidden layers keeps overhead small; the final layer uses a better-calibrated classification metric.
 
+## Gaps/risks to watch
+
+- **Scale invariance of hidden-layer gates**: Activation-strength can be input-scale sensitive; consider normalizing (e.g., post-layernorm statistics) to make thresholds portable.
+- **Numerical edge cases**: Explicitly document handling for near-limit values after `2**24` scaling and negatives; include saturation/overflow checks in tests.
+- **Train/infer mismatch**: If training never experiences gating decisions, distribution shift can creep in; lightweight gating-aware training or stochastic gating probing may help.
+- **Defaults for quick start**: A 380-layer MLP is heavy; expose a "tiny" config in the README for CPU users to validate in seconds.
+
+## Quick wins to strengthen README
+
+- **Minimal, copy-paste example**: Show `MatrixCompressor.split/merge` round-trip on a small tensor and a one-batch `forward_progressive` run that prints expansion rate.
+- **Calibration snippet**: One short code sample that scans thresholds to hit a target expansion rate and saves them, then uses them at eval.
+- **Guarantees section with bounds**: One line on why `2**24` suffices for fp32 mantissa and how remainder ensures exactness within fp32 tolerance.
+
 ## Extensions we consider next
 - Generalize to N bands (keys → K cumulative boundaries) with fully vectorized split/merge.
 - Replace activation-strength gates with tiny per-layer probe heads for more principled mid-network uncertainty.
 - Learn per-layer band boundaries (with constraints) while keeping losslessness via the remainder band.
 - Real storage compression: cast bands to smaller integer widths and/or entropy-code for disk/transfer.
 - Apply to other architectures (CNNs, Transformers) to validate generality.
+
+## TODO
+
+- **Unit tests**: Round-trip invariance, interleaved-vector length, 100% index coverage, expanded==merged parity, and gating expansion-rate targets.
+- **Instrumentation**: Log per-layer expansion histograms and end-to-end compute savings; add a "target 10% expansion" preset with saved thresholds.
 
 ## License
 
