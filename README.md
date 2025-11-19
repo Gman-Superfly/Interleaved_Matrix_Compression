@@ -1,5 +1,7 @@
 ## Interleaved Matrix Compression (IMC)
 
+This is an oldie from archive, seriously now, I used similar technique for some old graphics and last year I had the idea maybe, just maybe I could also use it to save some inference time, however note, the training time goes up, at the moment the other interleaves are static, in the dithering algo I had made where I had the original idea I had dynamic areas... lifes a biatch, need more hours in the day
+
 IMC explores a simple but powerful idea: compression is not an afterthought, it is the baseline. We keep the model in a compact, lossless state by default and unfold extra detail only when uncertainty justifies the extra compute.
 
 This repository implements a reversible, banded decomposition of neural network weights, plus a single-pass, on-the-fly unfolding mechanism driven by uncertainty signals. The result is a model that is efficient on easy inputs and selectively spends compute only where it matters.
