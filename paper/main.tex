@@ -1,0 +1,29 @@
+\documentclass[10pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\title{Interleaved Matrix Compression: Lossless Banded Reparameterization for Dynamic Inference}
+\author{Anonymous}
+\date{}
+\begin{document}
+\maketitle
+\begin{abstract}
+We propose a lossless banded reparameterization of neural network weights that enables
+single-pass, uncertainty-driven progressive inference. Models compute cheaply on easy inputs
+using only the first band and selectively unfold additional bands when uncertainty warrants.
+\end{abstract}
+\section{Introduction}
+Compression as baseline; dynamic compute on demand. Relation to bit-plane coding and early exits.
+\section{Method}
+Three-band integer-bounded split with $2^{24}$ scaling; exact merge on the fp32 lattice.
+Single-pass progressive unfolding with per-sample gating.
+\section{Experiments}
+CPU MNIST: accuracy-latency Pareto; expansion histograms; ablations.
+\section{Discussion}
+Limitations, numerical considerations, portability of thresholds.
+\section{Conclusion}
+IMC provides a principled path to progressive precision and compute allocation.
+\end{document}
+
+

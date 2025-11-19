@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+title: "Interleaved Matrix Compression (IMC)"
+message: "If you use this repository in your research, please cite it as below."
+type: software
+authors:
+  - family-names: Goldman
+    given-names: Oscar
+    affiliation: "Shogu research Group @ Datamutant.ai subsidiary of 温心重工業"
+repository-code: "https://github.com/datamutant-ai/Interleaved_Matrix_Compression"
+license: MIT
+keywords:
+  - compression
+  - dynamic inference
+  - neural networks
+  - uncertainty
+version: "0.1.0"
+date-released: "2025-11-19"
+
+

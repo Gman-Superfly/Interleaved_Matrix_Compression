@@ -55,6 +55,19 @@ Properties:
   - Calibration pass: scans output thresholds to hit a target expansion rate.
   - Evaluation: uses `forward_progressive` with calibrated threshold and reports expansion statistics.
 
+- `imc/` (package)
+  - `compress.py`: `MatrixCompressor` (library form)
+  - `model.py`: `CompressedMLP` (library form)
+  - `infer_cpu.py`: `forward_progressive_bucketing` — compute-efficient progressive path on CPU (per-sample bucketing; no full-batch masked matmuls)
+  - `calibrate.py`: hidden-layer percentile calibration + output threshold calibration; save/load JSON
+  - `train_cpu.py`: tiny training utilities (MNIST)
+
+- Scripts and examples
+  - `scripts/bench_cpu.py`: accuracy/latency benchmarking (merged vs expanded vs progressive vs static early-exit)
+  - `scripts/plot_results.py`: Pareto plot
+  - `examples/roundtrip_minimal.py`: minimal split/merge demo
+  - `examples/progressive_demo_cpu.py`: progressive inference with stats and JSON thresholds
+
 ## Guarantees and invariants
 - Round-trip invariance: `deinterleave(interleave(params))` preserves weights (pre/post training checks included).
 - Lossless decomposition: `merge(m1, m2, m3) == original` within fp32 tolerance.
@@ -72,23 +85,32 @@ Properties:
 - Python 3.10+
 - PyTorch and TorchVision (CPU or CUDA builds)
 
-We recommend using `uv` to install dependencies (works on Windows, macOS, Linux):
+Install dependencies (Windows PowerShell):
 
-```bash
-python -m pip install uv
-uv pip install torch torchvision  # add --index-url for CUDA wheels if desired
+```powershell
+python -m pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
-Then run:
+Quick demos (CPU):
 
-```bash
-python imc.py
+```powershell
+# Minimal round-trip
+python examples/roundtrip_minimal.py
+
+# Progressive inference (calibration + stats)
+python examples/progressive_demo_cpu.py
+
+# Benchmark + Pareto plot
+python scripts/bench_cpu.py --hidden-dim 128 --layers 16 --device cpu
+python scripts/plot_results.py --results artifacts/bench_cpu_results.json
 ```
 
 Notes:
 - The provided MLP is intentionally deep (default 380 layers) and may be slow; feel free to reduce `num_hidden_layers` and/or `hidden_dim` in `CompressedMLP` for quick iteration.
 - If you have CUDA, PyTorch will use it automatically.
  - The example calibration scans thresholds using the test loader for brevity; for proper evaluation, prefer a held-out validation split for calibration.
+ - Calibrated thresholds (CPU/MNIST) are saved to `artifacts/thresholds_cpu_mnist.json`.
 
 ## Key knobs to tune
 - In `forward_progressive` (inference):
